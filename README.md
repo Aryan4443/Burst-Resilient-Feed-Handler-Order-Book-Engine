@@ -16,117 +16,147 @@ Priorities, in order: **correctness → low latency (no hot-path allocation) →
 
 ---
 
-## Resume & portfolio reference
+## What this is for
 
-Use this section when writing bullet points, a project blurb, or interview talking points.
-All throughput/latency numbers below come from the reproducible harness in
-[`reports/benchmark.md`](reports/benchmark.md) (500k-message ITCH 5.0 dataset, Release build).
+Exchanges and data vendors do not send a clean “current price.” They send a **high-speed stream
+of small messages** — add order, cancel, trade, replace — often millions per second at the open.
+Downstream systems need a **reconstructed order book**: the live bid/ask ladder and depth at
+each price.
 
-### One-line summary (for resume header or LinkedIn)
+This project is the **middle layer** that turns that raw stream into a trustworthy book:
 
-> Built a C++20 lock-free market-data feed handler and order-book engine processing **20M+ msg/s**
-> with sub-µs p50 latency, sequence-gap recovery, and a live Binance L2 adapter with real-time
-> dashboard.
+```
+Exchange / recorded file          Your engine                    Consumers
+(raw ITCH or WebSocket)    →   feed handler + order book   →   strategy, UI, risk, logs
+```
 
-### Suggested resume bullets
+It is **not** a trading app (no orders, no P&amp;L). It is the infrastructure a trading stack,
+research pipeline, or monitoring tool sits on top of.
 
-Pick 2–4 and trim to your format. Each is written in impact-first style; swap verbs as needed.
+### Who uses something like this
 
-**Core engine**
-
-- Designed and implemented a **two-thread C++20 market-data pipeline** (ITCH 5.0 ingest →
-  zero-copy parser → gap detector → lock-free SPSC ring → order book → publisher) prioritizing
-  correctness, then latency, then observability.
-- Achieved **20.08 M msg/s sustained throughput** and **2.4 µs p50 / 2.8 ms p99 end-to-end
-  latency** at sustainable load on a 500k-message synthetic NASDAQ ITCH replay
-  ([benchmark report](reports/benchmark.md)).
-- Built a **lock-free single-producer/single-consumer ring buffer** (cache-line-padded head/tail,
-  cached cross-core indices, power-of-two masking) with explicit **Block vs Drop backpressure**
-  policies; verified **zero data races** under ThreadSanitizer in CI.
-- Implemented an **O(1) tick-indexed order book** with intrusive FIFO per price level,
-  order-ref hash map for cancel/modify, object pool (no per-order heap alloc), and cached
-  best-bid/ask — supporting both order-by-order (ITCH) and aggregated L2 (crypto) apply paths.
-- Engineered **sequence-gap detection and delta replay**: buffers out-of-order messages, replays
-  in order once the gap fills, and falls back to snapshot reload on overflow — recovered the book
-  to a **byte-identical state in 127 µs** under injected gap stress tests.
-
-**Live market data & dashboard**
-
-- Integrated a **live Binance L2 WebSocket adapter** (REST snapshot bootstrap + diff-depth
-  stream + update-id resync) driving the same ring/book stack as file replay — no API key, dual
-  region support (`binance.com` global + `binance.us`).
-- Built an embedded **real-time web dashboard** (HTTP snapshot polling, self-contained HTML/JS,
-  no CDN) exposing engine-only telemetry — p50/p99 latency, gap/re-sync counts, ring drops,
-  crossed-book detection, and 15-level depth — not available from raw exchange APIs.
-- Added **side-by-side Global vs US compare view**, live **@trade tape**, hot **symbol switching**
-  (BTCUSDT, ETHUSDT, SOLUSDT, …), and an **alert banner** for gaps, re-syncs, crossed books,
-  and wide spreads.
-
-**Quality & tooling**
-
-- Authored **51 GoogleTest unit tests** covering parser byte-level decoding, book FIFO/time
-  priority, sequencer gap replay, ring-buffer drop accounting, HDR latency histograms, and L2
-  event-boundary crossed detection.
-- Set up **multi-platform CI** (Linux + macOS Release builds, ASan/UBSan/TSan sanitizer matrix,
-  end-to-end smoke: generate → replay → microbench → markdown report).
-- Built a **synthetic ITCH 5.0 generator** and stress harness with offered-load sweeps, gap
-  injection, and overload backpressure experiments producing reproducible markdown benchmark
-  reports.
-
-### Problem → solution → impact (interview framing)
-
-| Problem | What you built | Measurable outcome |
-|---|---|---|
-| Exchange feeds arrive faster than a book can update | Lock-free SPSC ring + two-thread pipeline | 20M+ msg/s sustained; p50 ≈ 2.4 µs at 2M msg/s offered |
-| Sequence gaps corrupt books silently | Sequencer with delta replay + snapshot fallback | Book identical to clean run after gap; 127 µs recovery |
-| Overload must be handled explicitly, not ignored | Block (lossless) vs Drop (counted) backpressure | 0 drops (Block) or exact drop count (Drop) — never silent loss |
-| Live crypto feeds use aggregated L2, not order refs | `set_level()` path + Binance update-id resync | Live BTCUSDT streaming with `cross 0`, gap-driven re-snapshot |
-| Engine telemetry invisible to consumers | Embedded dashboard fed by consumer thread | Real-time p50/p99, gaps, resyncs, drops, crossed — same-origin JSON |
-
-### Technical skills & keywords (ATS / skills section)
-
-**Languages & standards:** C++20, CMake, Ninja
-
-**Systems & concurrency:** lock-free data structures, SPSC ring buffer, memory ordering
-(acquire/release), cache-line alignment, false-sharing avoidance, two-thread producer/consumer
-pipelines, backpressure policies
-
-**Market data domain:** NASDAQ ITCH 5.0, order book reconstruction, time priority / FIFO,
-top-of-book (L1), market-by-price (L2), sequence-gap recovery, snapshot resync, Binance
-diff-depth + update-id windows
-
-**Performance engineering:** zero-copy parsing, mmap file ingest, object pooling, HDR-style
-latency histograms, throughput/latency sweeps, microbenchmarks, offered-load stress testing
-
-**Networking & live feeds:** WebSocket/TLS (IXWebSocket), REST snapshot bootstrap, JSON event
-decode (nlohmann/json), multi-region endpoint handling (HTTP 451 fallback)
-
-**Testing & CI:** GoogleTest, AddressSanitizer, UndefinedBehaviorSanitizer, ThreadSanitizer,
-GitHub Actions, cross-platform builds (Linux GCC, macOS clang)
-
-**Tools:** `itch_gen` (synthetic feed), `feed_handler` (replay), `bench_harness` (markdown
-reports), `live_feed` (Binance adapter + dashboard)
-
-### Verified performance metrics
-
-From [`reports/benchmark.md`](reports/benchmark.md) — Apple Silicon laptop, Release `-O3`,
-500,001 ITCH 5.0 messages, 65,536-slot ring:
-
-| Metric | Value |
+| Role | Why they need a feed handler + book |
 |---|---|
-| Peak sustained throughput (Block policy) | **20.08 M msg/s** |
-| p50 latency @ 2 M msg/s offered | **2.42 µs** |
-| p99 latency @ 2 M msg/s offered | **2.76 ms** |
-| Gap recovery time (250k-seq injection) | **127 µs** |
-| Book state after gap recovery | **Identical to clean run** |
-| Drop policy under overload | **434,463 drops counted exactly** (86.9%) |
-| Unit tests | **51** (parser, book, sequencer, ring, instrumentation, L2) |
-| CI platforms | **Linux + macOS**; ASan, UBSan, TSan |
+| **Market makers / HFT firms** | Quote prices and react to book changes in microseconds |
+| **Prop / quant trading desks** | Feed live or replayed prices into strategies and simulators |
+| **Exchanges & ECNs** | Maintain the official book that clients trade against |
+| **Brokerages & retail platforms** | Power bid/ask displays and depth charts |
+| **Risk & compliance** | Detect stale feeds, crossed markets, or missing data before bad decisions |
+| **Market-data engineers** | Validate a new feed adapter, recovery logic, or performance before production |
+| **Students & researchers** | Learn how real market-data systems are structured end-to-end |
 
-Live adapter (typical BTCUSDT session): sub-ms p50 end-to-end ingest→book, `gaps 0` in steady
-state, automatic re-snapshot on update-id discontinuity.
+This repo is a **working reference implementation** of that layer — same architectural patterns
+as production systems, runnable on a laptop without exchange credentials or colocation.
 
-### Architecture at a glance
+### Where it sits in a real stack
+
+```
+┌──────────────────┐
+│ Binance / NASDAQ │  raw messages (WebSocket, multicast, or file)
+└────────┬─────────┘
+         ▼
+┌──────────────────┐
+│  Feed handler    │  parse, sequence-check, buffer bursts  ← this project
+│  + order book    │  reconstruct L1/L2, recover from gaps
+└────────┬─────────┘
+         ▼
+┌──────────────────┐
+│ Strategy / UI /  │  pricing, charts, alerts, backtests
+│ risk / storage   │
+└──────────────────┘
+```
+
+Production deployments add colocation, kernel bypass, and thousands of symbols. The **ideas** —
+lock-free ingest, gap recovery, tick-indexed book — are the same.
+
+---
+
+## Use cases
+
+### 1. Replay recorded market data (research & backtesting)
+
+Generate or load an ITCH 5.0 file and replay it through the full pipeline.
+
+```bash
+./build/itch_gen --out data/sample.itch --orders 500000
+./build/feed_handler --file data/sample.itch
+```
+
+**When:** You want to verify book correctness on historical or synthetic data, prototype a
+consumer that reads top-of-book, or regression-test after a code change — without a live
+exchange connection.
+
+**Who:** Quant researchers, strategy developers, infra engineers validating feed parsing.
+
+---
+
+### 2. Stress-test throughput, latency, and recovery
+
+Run the benchmark harness to measure how the engine behaves under load, gaps, and overload.
+
+```bash
+./build/benchmarks/bench_harness --file data/sample.itch --report reports/benchmark.md
+```
+
+**When:** Before trusting a feed handler in production — e.g. “Can we sustain 20M msg/s?”, “Does
+gap recovery restore an identical book?”, “What happens when the consumer falls behind?”
+
+**Who:** Low-latency / market-data engineers, anyone sizing ring buffers or backpressure policy.
+
+Sample results ([`reports/benchmark.md`](reports/benchmark.md)): **20.08 M msg/s** sustained,
+**2.4 µs p50** latency at 2M msg/s offered, **127 µs** gap recovery to a byte-identical book.
+
+---
+
+### 3. Stream a live exchange book (monitoring & demo)
+
+Connect to Binance’s public L2 diff-depth feed — no API key required.
+
+```bash
+./build-live/live_feed --symbol BTCUSDT --duration 30
+```
+
+**When:** You need a **live** reconstructed book with engine telemetry (latency, gaps,
+re-syncs, crossed detection) rather than trusting the exchange UI alone.
+
+**Who:** Crypto traders comparing venues, engineers testing WebSocket + snapshot resync logic.
+
+---
+
+### 4. Monitor Global vs US with a live dashboard
+
+Run both Binance regions in parallel and open the built-in web UI.
+
+```bash
+./build-live/live_feed --symbol BTCUSDT --serve 8765 --market both
+# → http://localhost:8765
+```
+
+**When:** You want to **watch** live depth, compare Global vs US pricing on the same symbol,
+see the trade tape, and get **alerts** when the feed gaps, re-syncs, or shows a crossed book.
+
+**Who:** Traders monitoring cross-region spreads, demo viewers, anyone validating that recovery
+logic works on a real feed.
+
+**Dashboard endpoints:** `/snapshot.json`, `/compare.json`, `/symbols.json` — see
+[Web dashboard](#web-dashboard) below.
+
+---
+
+### 5. Learn market-data systems architecture
+
+Read the code and [`DESIGN_NOTES.md`](DESIGN_NOTES.md) to see *why* each piece exists: POD
+events through a lock-free ring, ITCH zero-copy parsing, sequencer gap replay, tick-indexed
+FIFO book, Binance update-id resync, Block vs Drop backpressure.
+
+**When:** Studying for infra / HFT / market-data interviews, or building a similar system from
+scratch.
+
+**Who:** CS students, career switchers, engineers moving into finance tech.
+
+---
+
+## Architecture
 
 ```
 ┌─────────────┐    ┌────────┐    ┌───────────┐    ┌─────────────────┐    ┌───────────┐    ┌───────────┐
@@ -139,7 +169,8 @@ state, automatic re-snapshot on update-id discontinuity.
 
 **Thread A (ingest):** read frame → parse → stamp receive time → push to ring.
 **Thread B (book):** pop → sequence/gap-check → apply to book → publish → record latency.
-**Design doc:** [`DESIGN_NOTES.md`](DESIGN_NOTES.md) — rationale for every data structure choice.
+
+See [`DESIGN_NOTES.md`](DESIGN_NOTES.md) for the rationale behind every data structure choice.
 
 ---
 
