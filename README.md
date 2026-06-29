@@ -18,7 +18,7 @@ Priorities, in order: **correctness → low latency (no hot-path allocation) →
 
 | Component | What it does |
 |---|---|
-| `FeedSource` | Pluggable adapter. ITCH 5.0 file replayer first; crypto WebSocket later. Emits framed bytes + sequence numbers. |
+| `FeedSource` | Pluggable adapter. ITCH 5.0 file replayer **and** a live Binance WebSocket adapter (opt-in, see below). Emits framed bytes / events + sequence numbers. |
 | `Parser` | Zero-copy binary decoder. Unpacks ITCH fixed layouts into a POD `MarketEvent`. No per-message heap allocation. |
 | `Sequencer / GapDetector` | Tracks per-stream sequence numbers; on a gap marks the book stale and drives recovery, then resyncs. |
 | `SpscRingBuffer` | Lock-free single-producer/single-consumer bounded queue. Power-of-two capacity, cache-line-padded head/tail, explicit backpressure (block vs counted-drop). |
@@ -59,6 +59,38 @@ Useful options: `-DFH_ASAN=ON` (sanitizers), `-DFH_BUILD_BENCH=OFF`, `-DFH_BUILD
 See [`reports/benchmark.md`](reports/benchmark.md) for a sample report (sustained throughput,
 latency-vs-load curve, gap-recovery correctness + time, and Block-vs-Drop backpressure).
 
+## Live market data (real-time, no API key)
+
+The same engine can run on a **live exchange feed** instead of a recorded file. The adapter is
+opt-in (it fetches a WebSocket/TLS client + JSON parser via CMake), so the default build, tests,
+and CI stay dependency-free:
+
+```bash
+cmake -S . -B build-live -G Ninja -DCMAKE_BUILD_TYPE=Release -DFH_BUILD_LIVE=ON
+cmake --build build-live --target live_feed
+
+# Stream Binance's public diff-depth (L2) order book through the engine — no credentials needed.
+./build-live/live_feed --symbol BTCUSDT --duration 30
+
+# US / region-restricted (HTTP 451)? point at the binance.us endpoints (auto-suggested on failure):
+./build-live/live_feed --rest-host https://api.binance.us \
+    --ws-url wss://stream.binance.us:9443/ws/btcusdt@depth@100ms
+```
+
+It bootstraps from a REST depth snapshot, then drives the book from the live diff stream through
+the **same lock-free ring**, printing top-of-book / spread / depth / latency / gap-recovery stats
+once a second:
+
+```
+BTCUSDT  bid 60313.84 x0.001 | ask 60313.85 x0.034 | spread 0.01 | levels 707 | 17 op/s |
+         p50 382.98 us p99 1.40 ms | drops 0 | gaps 0 resync 1 | oob 7282 cross 0 | streaming
+```
+
+Binance publishes **aggregated price-level (L2)** updates, so the book is driven via
+`OrderBook::set_level()` (absolute size per level) and the resync runs on Binance's update-id
+window. See [DESIGN_NOTES.md](DESIGN_NOTES.md#live-market-data-adapter-binance-l2) for how the L2
+path and update-id resync map onto the engine.
+
 ## Layout
 
 ```
@@ -67,7 +99,7 @@ src/                   library implementations
 tests/                 GoogleTest unit + stress tests
 benchmarks/            microbenchmarks + stress harness + benchmark reporter
 tools/                 itch_gen (synthetic ITCH 5.0 generator)
-apps/                  feed_handler end-to-end runner
+apps/                  feed_handler (file replay) + live_feed (live Binance L2, opt-in)
 DESIGN_NOTES.md        why each choice was made (interview prep)
 ```
 
@@ -82,6 +114,8 @@ Every push and PR runs [`.github/workflows/ci.yml`](.github/workflows/ci.yml):
   `ctest` suite, plus an end-to-end smoke test (generate → replay → microbench).
 - **AddressSanitizer + UBSan** and **ThreadSanitizer** builds — the latter is the headline
   check for the lock-free SPSC ring buffer (zero data races).
+- **live adapter build** — compiles the opt-in Binance adapter (`-DFH_BUILD_LIVE=ON`, deps via
+  `FetchContent`) so it stays buildable, without opening a live socket in CI.
 
 ## License
 

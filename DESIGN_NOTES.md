@@ -288,6 +288,51 @@ order set so cancel/execute/delete/replace reference real orders → the book st
 (0 unknown-ref) and non-crossing (disjoint bid/ask bands around a fixed mid). Lets the whole
 engine run end-to-end with no external download, while parsing the real binary layout.
 
+## Live market-data adapter (Binance L2)
+
+The engine isn't tied to files — `FeedSource` is the seam, and `apps/live_feed.cpp` (opt-in
+`-DFH_BUILD_LIVE=ON`) drives the **same** book/ring/latency stack from a live Binance feed. Kept
+behind a flag because it pulls a WebSocket/TLS client (IXWebSocket) + JSON (nlohmann/json); the
+core, tests, and CI stay dependency-free.
+
+**Why Binance.** NASDAQ TotalView-ITCH is a paid colocated multicast feed; Coinbase's full/level3
+channels now require authentication. Binance's diff-depth stream is genuinely public (no key),
+high-volume, and carries a snapshot + update-id model — the recovery story the project is about.
+
+**L2 vs the order-by-order book.** Binance publishes *aggregated price-level* (market-by-price)
+updates — `[price, total_qty]`, not individual orders. So the book grew a second apply path,
+`OrderBook::set_level(side, price, total)` (absolute size; 0 removes the level), sharing the same
+tick-indexed array, best-of-book pointers, and crossed counter as the order-by-order `apply()`.
+`live_orders()` then counts populated price levels.
+
+**Threading is unchanged.** Thread A is IXWebSocket's callback: decode each level change to an
+`L2SetLevel` event carrying the diff event's update-id window `U..u`, stamp `recv_ns`, push to the
+SPSC ring. Thread A is deliberately *dumb* — it never touches the book or decides ordering. Thread
+B pops, runs the resync state machine, and applies via `set_level`.
+
+**Resync = the same gap story in Binance's id space.** Binance update ids advance by a *range* per
+event (not +1), so the ITCH `Sequencer` doesn't fit; the consumer implements Binance's documented
+rule directly: snapshot gives `lastUpdateId L`; drop events with `u <= L`; the first applied event
+must straddle `L+1` (`U <= L+1 <= u`); thereafter each event must satisfy `U == prev_u + 1`, else
+it is an unrecoverable gap → **re-snapshot** (book reset + reload + re-seek). Same
+detect-discontinuity-then-reload recovery as the file pipeline, expressed on update ids.
+
+**Honest adaptations (called out, not hidden):**
+- **Price band from the snapshot mid (±%).** The tick-indexed array is sized to a band around the
+  live mid; deep limit orders outside it are counted as `out_of_band`, not crashed (top-of-book is
+  exact). Crypto's wide absolute prices would otherwise need an enormous array.
+- **Fixed-point scaling.** Quote/size arrive as decimal strings; prices → integer ticks (`×100`,
+  cents, for BTCUSDT), sizes → scaled units (`×1e6`, micro-BTC). A per-level size exceeding the
+  uint32 ring field is clamped and *counted* (effectively never on BTCUSDT).
+- **String order ids** (used by the order-by-order Coinbase variant) hash to the engine's `uint64`
+  order ref via FNV-1a.
+- **Region restriction:** `api.binance.com` returns HTTP 451 in some regions; the tool detects it
+  and suggests the `binance.us` endpoints (`--rest-host` / `--ws-url`).
+
+*Verified live:* reconstructs BTCUSDT top-of-book with a correct spread, `cross 0` (never an
+inverted book), `gaps 0` once streaming, p50 ≈ sub-ms end-to-end. Unit tests cover the `set_level`
+path (build / absolute-resize / zero-removes-and-advances / no-op / out-of-band).
+
 ## Build / toolchain
 
 - C++20, CMake (+ Ninja), GoogleTest via `FetchContent`.

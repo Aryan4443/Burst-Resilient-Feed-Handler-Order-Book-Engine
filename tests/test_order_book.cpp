@@ -264,3 +264,60 @@ TEST(OrderBook, StatsCountByType) {
   EXPECT_EQ(s.trades, 1u);
   EXPECT_EQ(s.applied, 6u);
 }
+
+// --- L2 / price-level apply path (set_level), used by aggregated-depth feeds like Binance ---
+
+TEST(OrderBookL2, SetLevelBuildsTopOfBook) {
+  OrderBook b(small_cfg());
+  b.set_level(Side::Buy, 100, 10);
+  b.set_level(Side::Buy, 99, 5);
+  b.set_level(Side::Sell, 102, 7);
+  b.set_level(Side::Sell, 103, 3);
+
+  EXPECT_EQ(b.best_bid().price_ticks, 100);
+  EXPECT_EQ(b.best_bid().aggregate_size, 10u);
+  EXPECT_EQ(b.best_ask().price_ticks, 102);
+  EXPECT_EQ(b.best_ask().aggregate_size, 7u);
+  EXPECT_EQ(b.spread_ticks(), 2);
+  EXPECT_EQ(b.live_orders(), 4u);  // populated price levels
+  EXPECT_FALSE(b.is_crossed());
+}
+
+TEST(OrderBookL2, SetLevelResizesAbsolute) {
+  OrderBook b(small_cfg());
+  b.set_level(Side::Buy, 100, 10);
+  b.set_level(Side::Buy, 100, 25);  // absolute set, not additive
+  EXPECT_EQ(b.best_bid().aggregate_size, 25u);
+  EXPECT_EQ(b.live_orders(), 1u);   // still one level
+}
+
+TEST(OrderBookL2, ZeroSizeRemovesLevelAndAdvancesBest) {
+  OrderBook b(small_cfg());
+  b.set_level(Side::Buy, 100, 10);
+  b.set_level(Side::Buy, 99, 5);
+  ASSERT_EQ(b.best_bid().price_ticks, 100);
+
+  b.set_level(Side::Buy, 100, 0);  // remove the top bid
+  EXPECT_EQ(b.best_bid().price_ticks, 99);
+  EXPECT_EQ(b.best_bid().aggregate_size, 5u);
+  EXPECT_EQ(b.live_orders(), 1u);
+
+  b.set_level(Side::Buy, 99, 0);  // empty the book
+  EXPECT_FALSE(b.best_bid().valid);
+  EXPECT_EQ(b.live_orders(), 0u);
+}
+
+TEST(OrderBookL2, ZeroSizeOnEmptyLevelIsNoOp) {
+  OrderBook b(small_cfg());
+  b.set_level(Side::Sell, 200, 0);  // remove a level that never existed
+  EXPECT_FALSE(b.best_ask().valid);
+  EXPECT_EQ(b.live_orders(), 0u);
+}
+
+TEST(OrderBookL2, OutOfBandSetLevelRejected) {
+  OrderBook b(small_cfg());            // band is [1, 1000]
+  b.set_level(Side::Buy, 5000, 10);    // out of band
+  EXPECT_EQ(b.stats().rejected_out_of_band, 1u);
+  EXPECT_FALSE(b.best_bid().valid);
+  EXPECT_EQ(b.live_orders(), 0u);
+}

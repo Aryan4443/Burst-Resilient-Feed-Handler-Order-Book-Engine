@@ -20,6 +20,11 @@ enum class EventType : std::uint8_t {
   Replace,            // atomic cancel(order_ref) + add(new_order_ref) at new price/size
   Trade,              // non-displayable trade: tape only, no book mutation
   SystemEvent,        // session / system message (start/end of messages, halts, ...)
+
+  // Aggregated price-level (L2 / market-by-price) feeds, e.g. Binance diff-depth. These do not
+  // carry per-order ids; the book applies them via OrderBook::set_level(), not apply().
+  L2SetLevel,         // set the ABSOLUTE resting size at price_ticks on `side` (size 0 removes)
+  L2EventHeader,      // carries an update-id window (order_ref=first, match_number=last); no book op
 };
 
 // Order side. ITCH encodes this as 'B'/'S'.

@@ -244,6 +244,58 @@ void OrderBook::apply(const MarketEvent& ev) noexcept {
   note_crossed();
 }
 
+void OrderBook::set_level(Side side, std::int64_t price_ticks, std::uint64_t total_size) noexcept {
+  const std::int64_t idx = to_index(price_ticks);
+  if (idx < 0) {
+    ++stats_.rejected_out_of_band;
+    ++stats_.applied;
+    return;
+  }
+  PriceLevel& lvl = levels_[static_cast<std::size_t>(idx)];
+
+  if (total_size == 0) {
+    if (lvl.order_count > 0) {  // remove a populated level
+      const Side old = lvl.side;
+      lvl.aggregate_size = 0;
+      lvl.order_count = 0;
+      lvl.side = Side::None;
+      --live_orders_;
+      if (old == Side::Buy && idx == best_bid_idx_) {
+        rescan_best_bid_from(idx - 1);
+      } else if (old == Side::Sell && idx == best_ask_idx_) {
+        rescan_best_ask_from(idx + 1);
+      }
+    }
+    ++stats_.deletes;
+  } else {
+    if (lvl.order_count == 0) {  // first size at an empty level
+      lvl.side = side;
+      lvl.order_count = 1;
+      lvl.aggregate_size = total_size;
+      ++live_orders_;
+    } else if (lvl.side == side) {  // resize an existing level (the common case)
+      lvl.aggregate_size = total_size;
+    } else {  // side flip on a populated level (inconsistent feed): treat as a fresh level
+      const Side old = lvl.side;
+      lvl.side = side;
+      lvl.aggregate_size = total_size;  // order_count stays 1
+      if (old == Side::Buy && idx == best_bid_idx_) {
+        rescan_best_bid_from(idx - 1);
+      } else if (old == Side::Sell && idx == best_ask_idx_) {
+        rescan_best_ask_from(idx + 1);
+      }
+    }
+    if (side == Side::Buy) {
+      if (best_bid_idx_ < 0 || idx > best_bid_idx_) best_bid_idx_ = idx;
+    } else if (side == Side::Sell) {
+      if (best_ask_idx_ < 0 || idx < best_ask_idx_) best_ask_idx_ = idx;
+    }
+    ++stats_.adds;
+  }
+  ++stats_.applied;
+  note_crossed();
+}
+
 BookLevel OrderBook::best_bid() const noexcept {
   if (best_bid_idx_ < 0) return {};
   const PriceLevel& lvl = levels_[static_cast<std::size_t>(best_bid_idx_)];

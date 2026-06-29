@@ -93,3 +93,26 @@ jobs:
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
           TSAN_OPTIONS: halt_on_error=1
         run: ctest --test-dir build --output-on-failure
+
+  # ---------------------------------------------------------------------------
+  # Compile the opt-in live Binance adapter (WebSocket/TLS + JSON, fetched via FetchContent).
+  # Compile + --help only: CI has no reliable exchange access, so no live socket is opened here.
+  # The default build above stays dependency-free; this just proves the adapter still links.
+  # ---------------------------------------------------------------------------
+  live-build:
+    name: build live adapter (linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install deps (Ninja, OpenSSL, zlib)
+        run: sudo apt-get update && sudo apt-get install -y ninja-build libssl-dev zlib1g-dev
+
+      - name: Configure (live adapter on)
+        run: cmake -S . -B build-live -G Ninja -DCMAKE_BUILD_TYPE=Release -DFH_BUILD_LIVE=ON -DFH_BUILD_TESTS=OFF -DFH_BUILD_BENCH=OFF
+
+      - name: Build live_feed
+        run: cmake --build build-live --target live_feed
+
+      - name: Binary links and runs (no network)
+        run: ./build-live/live_feed --help

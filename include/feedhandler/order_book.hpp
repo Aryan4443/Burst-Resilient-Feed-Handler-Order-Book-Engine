@@ -62,6 +62,13 @@ class OrderBook {
   // on the book (Trade still counted). Never throws.
   void apply(const MarketEvent& ev) noexcept;
 
+  // L2 / price-level apply path: set the ABSOLUTE resting size at a price level (total_size 0
+  // removes the level). Used by aggregated depth feeds (e.g. Binance diff-depth) that publish
+  // per-level totals instead of individual orders; complements the order-by-order apply()
+  // above and shares the same tick-indexed array, best-of-book pointers, and crossed counter.
+  // `live_orders()` then counts populated price levels. Never throws.
+  void set_level(Side side, std::int64_t price_ticks, std::uint64_t total_size) noexcept;
+
   // Top of book.
   BookLevel best_bid() const noexcept;
   BookLevel best_ask() const noexcept;

@@ -20,6 +20,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 option(FH_BUILD_TESTS "Build unit tests" ON)
 option(FH_BUILD_BENCH "Build benchmarks / harness" ON)
+option(FH_BUILD_LIVE  "Build the live Coinbase WebSocket feed adapter (fetches IXWebSocket + nlohmann/json; needs TLS)" OFF)
 option(FH_ASAN       "Build with AddressSanitizer + UBSan" OFF)
 option(FH_TSAN       "Build with ThreadSanitizer" OFF)
 
@@ -69,6 +70,36 @@ target_link_libraries(itch_gen PRIVATE feedhandler)
 
 add_executable(feed_handler apps/feed_handler.cpp)
 target_link_libraries(feed_handler PRIVATE feedhandler)
+
+# ---------------------------------------------------------------------------
+# Live feed adapter (opt-in: needs network + TLS, pulls third-party deps).
+# Reuses the SAME engine (order book, sequencer, lock-free ring, instrumentation)
+# but ingests a live Coinbase Exchange order-by-order feed instead of a file.
+# Off by default so the core build, tests, and CI stay dependency-free.
+# ---------------------------------------------------------------------------
+if(FH_BUILD_LIVE)
+  include(FetchContent)
+
+  set(JSON_BuildTests OFF CACHE INTERNAL "")
+  FetchContent_Declare(nlohmann_json
+    GIT_REPOSITORY https://github.com/nlohmann/json.git
+    GIT_TAG        v3.11.3
+    GIT_SHALLOW    TRUE)
+
+  # IXWebSocket: small WebSocket + HTTP client with TLS.
+  set(USE_TLS ON CACHE BOOL "" FORCE)
+  set(IXWEBSOCKET_INSTALL OFF CACHE BOOL "" FORCE)
+  FetchContent_Declare(ixwebsocket
+    GIT_REPOSITORY https://github.com/machinezone/IXWebSocket.git
+    GIT_TAG        v11.4.5
+    GIT_SHALLOW    TRUE)
+
+  FetchContent_MakeAvailable(nlohmann_json ixwebsocket)
+
+  add_executable(live_feed apps/live_feed.cpp)
+  # Link the engine WITHOUT propagating our strict warning flags onto third-party headers.
+  target_link_libraries(live_feed PRIVATE feedhandler ixwebsocket nlohmann_json::nlohmann_json)
+endif()
 
 # ---------------------------------------------------------------------------
 # Tests
