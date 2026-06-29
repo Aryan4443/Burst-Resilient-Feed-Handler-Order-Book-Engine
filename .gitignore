@@ -1,0 +1,32 @@
+# Build output
+/build/
+/build-*/
+/out/
+*.o
+*.obj
+*.a
+*.dylib
+*.so
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+compile_commands.json
+
+# Generated data / reports
+/data/*.itch
+/data/*.bin
+/reports/*.md
+!reports/.gitkeep
+# Keep a sample benchmark report in the repo (README links to it).
+!/reports/benchmark.md
+
+# Project brief / external docs (not part of the engineering deliverable)
+*.pdf
+
+# Editor / OS
+.DS_Store
+.vscode/
+.idea/
+*.swp
