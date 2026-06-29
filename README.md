@@ -111,11 +111,13 @@ Global and US markets run by default so you can switch in the browser dropdown; 
 It is **fed by the engine, not the exchange**: the consumer thread publishes a JSON snapshot of
 the reconstructed book a few times a second, served same-origin over a small HTTP endpoint
 (IXWebSocket, already a live-build dependency — no extra packages, no CDN). The page polls
-`/snapshot.json` and renders top-of-book, a 15-level depth ladder per side, a session mid-price
-line, and the engine's own telemetry — **updates/s, p50/p99 latency, gaps, re-syncs, ring drops,
-out-of-band, crossed** — numbers a browser talking straight to Binance could never compute.
-**Market** (Global vs US) and **Symbol** (BTCUSDT, ETHUSDT, SOLUSDT, …) dropdowns in the header
-hot-restart the feeds without stopping the process.
+`/snapshot.json` (single market) or `/compare.json` (both markets side-by-side) and renders
+top-of-book, a 15-level depth ladder per side, a session mid-price line, a **trade tape**
+(Binance `@trade` stream), and the engine's own telemetry — **updates/s, p50/p99 latency, gaps,
+re-syncs, ring drops, out-of-band, crossed** — numbers a browser talking straight to Binance
+could never compute. An **alert banner** flags new gaps, re-syncs, crossed books, and wide
+spreads (>0.5% of mid). **Compare / Single** toggles when both markets run; **Market** and
+**Symbol** dropdowns hot-restart feeds without stopping the process.
 
 ## Layout
 
