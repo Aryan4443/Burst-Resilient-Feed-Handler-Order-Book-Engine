@@ -269,6 +269,7 @@ markets run by default:
 
 | Endpoint | Purpose |
 |---|---|
+| `/health` | Liveness probe (`{"ok":true}`) for Docker / Fly.io |
 | `/` | Embedded dashboard (HTML/CSS/vanilla JS, no CDN) |
 | `/snapshot.json?market=global\|us` | Single-market book + telemetry + trades |
 | `/compare.json` | Both markets side-by-side (Global + US) |
@@ -287,6 +288,69 @@ markets run by default:
 
 The consumer thread publishes JSON snapshots ~5×/sec; a minimal HTTP server (IXWebSocket) serves
 them same-origin. The hot path (WebSocket ingest → ring → book) is untouched by the dashboard.
+
+For cloud deployment, bind on all interfaces: `--serve 8080 --bind 0.0.0.0`, or set the `PORT`
+environment variable (see [Deploy](#deploy) below).
+
+## Deploy
+
+Ship the live dashboard as a Docker container. The image builds `live_feed` with the Binance
+adapter and listens on `0.0.0.0` when the `PORT` env var is set (standard for Fly.io, Railway,
+Render, etc.).
+
+### Docker (local or any host)
+
+```bash
+# Build
+docker build -t order-book-live .
+
+# Run — dashboard at http://localhost:8080
+docker run --rm -p 8080:8080 \
+  -e PORT=8080 \
+  -e SYMBOL=BTCUSDT \
+  -e MARKET=both \
+  order-book-live
+
+# Or with docker compose
+docker compose up --build
+```
+
+**Environment variables**
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `PORT` | `8080` | HTTP port; starts dashboard when set (binds `0.0.0.0`) |
+| `SYMBOL` | `BTCUSDT` | Trading pair |
+| `MARKET` | `both` | `global`, `us`, or `both` |
+| `FH_BIND` | `0.0.0.0` (when `PORT` set) | Override listen address |
+
+**Health check:** `GET /health` → `{"ok":true}`
+
+### Fly.io (recommended — free tier, HTTPS included)
+
+Requires [flyctl](https://fly.io/docs/hands-on/install-flyctl/):
+
+```bash
+fly auth login
+fly launch --no-deploy    # use existing fly.toml; pick a unique app name + region
+fly deploy
+fly open                  # https://<your-app>.fly.dev
+```
+
+Edit `app = "order-book-live"` in [`fly.toml`](fly.toml) to a unique name before launching.
+The app runs continuously (`auto_stop_machines = off`) so WebSocket feeds stay connected.
+
+### Manual server (VPS)
+
+```bash
+cmake -S . -B build-live -G Ninja -DCMAKE_BUILD_TYPE=Release -DFH_BUILD_LIVE=ON
+cmake --build build-live --target live_feed
+
+PORT=8080 SYMBOL=BTCUSDT MARKET=both ./build-live/live_feed
+# or: ./build-live/live_feed --serve 8080 --bind 0.0.0.0 --market both
+```
+
+Put nginx or Caddy in front for HTTPS if exposing publicly.
 
 ## Layout
 

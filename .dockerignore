@@ -1,0 +1,9 @@
+build/
+build-live/
+.git/
+data/
+reports/
+*.md
+!README.md
+.cursor/
+**/*.itch

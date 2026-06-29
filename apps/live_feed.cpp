@@ -36,6 +36,7 @@
 #include <chrono>
 #include <cmath>
 #include <csignal>
+#include <cstdlib>
 #include <cstdint>
 #include <cstdio>
 #include <iostream>
@@ -78,6 +79,7 @@ struct Config {
   int duration_s = 0;                    // 0 => run until Ctrl-C
   int depth_ms = 100;                    // diff stream cadence: 100 or 1000
   int serve_port = 0;                    // >0 => serve the web dashboard on this port
+  std::string bind_host = "127.0.0.1";   // HTTP listen address (--bind; use 0.0.0.0 in Docker/cloud)
   MarketMode market = MarketMode::Auto;   // global | us | both (Auto => both when --serve)
   std::string ws_url;                    // overrides stream URL (single-feed mode only)
   std::string rest_host = "https://api.binance.com";
@@ -284,6 +286,7 @@ Config parse_args(int argc, char** argv) {
     else if (k == "--duration") c.duration_s = std::stoi(next());
     else if (k == "--depth-ms") c.depth_ms = std::stoi(next());
     else if (k == "--serve") c.serve_port = std::stoi(next());
+    else if (k == "--bind") c.bind_host = next();
     else if (k == "--market") {
       const std::string m = lower(next());
       if (m == "global") c.market = MarketMode::Global;
@@ -301,15 +304,43 @@ Config parse_args(int argc, char** argv) {
                    "[--size-scale 1000000]\n"
                    "                 [--band-pct 10] [--depth-ms 100|1000] [--drop] "
                    "[--duration SECONDS]\n"
-                   "                 [--serve PORT] [--market global|us|both]\n"
+                   "                 [--serve PORT] [--bind HOST] [--market global|us|both]\n"
                    "                 [--rest-host URL] [--ws-url URL]\n"
                    "Streams Binance's public diff-depth (L2) feed through the engine. "
                    "No API key required.\n"
                    "  --serve PORT     web dashboard at http://localhost:PORT\n"
+                   "  --bind HOST      HTTP listen address (default 127.0.0.1; use 0.0.0.0 to deploy)\n"
+                   "  Env: PORT        if set and --serve omitted, starts dashboard on PORT (bind 0.0.0.0)\n"
+                   "  Env: SYMBOL      override --symbol (e.g. BTCUSDT)\n"
+                   "  Env: MARKET       override --market (global|us|both)\n"
                    "  --market         global = binance.com data (data-api.binance.vision)\n"
                    "                   us = binance.us | both = run both (default with --serve)\n";
       std::exit(0);
     }
+  }
+  return c;
+}
+
+Config apply_env_overrides(Config c) {
+  if (c.serve_port == 0) {
+    if (const char* p = std::getenv("PORT")) {
+      if (*p) {
+        c.serve_port = std::stoi(p);
+        c.bind_host = "0.0.0.0";
+      }
+    }
+  }
+  if (const char* s = std::getenv("SYMBOL")) {
+    if (*s) c.symbol = upper(s);
+  }
+  if (const char* m = std::getenv("MARKET")) {
+    const std::string mode = lower(m);
+    if (mode == "global") c.market = MarketMode::Global;
+    else if (mode == "us") c.market = MarketMode::Us;
+    else if (mode == "both") c.market = MarketMode::Both;
+  }
+  if (const char* b = std::getenv("FH_BIND")) {
+    if (*b) c.bind_host = b;
   }
   return c;
 }
@@ -1013,7 +1044,7 @@ void supervise_feed(FeedContext& f, double price_div, double size_div) {
 }  // namespace
 
 int main(int argc, char** argv) {
-  const Config base_cfg = parse_args(argc, argv);
+  const Config base_cfg = apply_env_overrides(parse_args(argc, argv));
   std::signal(SIGINT, on_signal);
   std::signal(SIGTERM, on_signal);
   ix::initNetSystem();
@@ -1053,13 +1084,17 @@ int main(int argc, char** argv) {
   // ----------------------- Optional web dashboard (HTTP, same-origin JSON polling) ----------
   std::unique_ptr<ix::HttpServer> http_server;
   if (base_cfg.serve_port > 0) {
-    http_server = std::make_unique<ix::HttpServer>(base_cfg.serve_port, "127.0.0.1");
+    http_server = std::make_unique<ix::HttpServer>(base_cfg.serve_port, base_cfg.bind_host);
     http_server->setOnConnectionCallback(
         [&feeds, app_state](ix::HttpRequestPtr req,
                             std::shared_ptr<ix::ConnectionState>) -> ix::HttpResponsePtr {
           const ix::WebSocketHttpHeaders json_h{{"Content-Type", "application/json"},
                                                 {"Access-Control-Allow-Origin", "*"},
                                                 {"Cache-Control", "no-store"}};
+          if (req->uri.find("/health") != std::string::npos) {
+            return std::make_shared<ix::HttpResponse>(
+                200, "OK", ix::HttpErrorCode::Ok, json_h, std::string(R"({"ok":true})"));
+          }
           if (req->uri.find("/symbols.json") != std::string::npos) {
             json j;
             j["symbols"] = kSymbolCatalog;
@@ -1156,7 +1191,8 @@ int main(int argc, char** argv) {
       http_server.reset();
     } else {
       http_server->start();
-      std::cout << "dashboard: open http://localhost:" << base_cfg.serve_port << " in your browser";
+      std::cout << "dashboard: open http://" << base_cfg.bind_host << ":" << base_cfg.serve_port
+                << " in your browser";
       if (mode == MarketMode::Both) std::cout << " (Market + Symbol dropdowns in header)";
       std::cout << "\n";
     }
