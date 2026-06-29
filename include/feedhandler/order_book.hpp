@@ -69,6 +69,10 @@ class OrderBook {
   // `live_orders()` then counts populated price levels. Never throws.
   void set_level(Side side, std::int64_t price_ticks, std::uint64_t total_size) noexcept;
 
+  // L2 feeds apply many level updates per exchange event; call once at each event boundary
+  // (not after every set_level) so crossed_observed reflects persistent inversions only.
+  void observe_event_boundary() noexcept;
+
   // Top of book.
   BookLevel best_bid() const noexcept;
   BookLevel best_ask() const noexcept;
@@ -145,6 +149,7 @@ class OrderBook {
   std::int64_t best_ask_idx_ = -1;
   std::uint64_t live_orders_ = 0;
   OrderBookStats stats_{};
+  bool crossed_at_last_boundary_ = false;
 };
 
 }  // namespace fh

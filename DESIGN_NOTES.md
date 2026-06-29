@@ -302,8 +302,10 @@ high-volume, and carries a snapshot + update-id model — the recovery story the
 **L2 vs the order-by-order book.** Binance publishes *aggregated price-level* (market-by-price)
 updates — `[price, total_qty]`, not individual orders. So the book grew a second apply path,
 `OrderBook::set_level(side, price, total)` (absolute size; 0 removes the level), sharing the same
-tick-indexed array, best-of-book pointers, and crossed counter as the order-by-order `apply()`.
-`live_orders()` then counts populated price levels.
+tick-indexed array and best-of-book pointers as the order-by-order `apply()`. `set_level()` does
+**not** increment `crossed_observed`; the live consumer calls `observe_event_boundary()` once per
+Binance event (when the update-id window `U` changes) so transient mid-event crosses from
+multi-level diffs are not counted. `live_orders()` then counts populated price levels.
 
 **Threading is unchanged.** Thread A is IXWebSocket's callback: decode each level change to an
 `L2SetLevel` event carrying the diff event's update-id window `U..u`, stamp `recv_ns`, push to the
@@ -332,6 +334,29 @@ detect-discontinuity-then-reload recovery as the file pipeline, expressed on upd
 *Verified live:* reconstructs BTCUSDT top-of-book with a correct spread, `cross 0` (never an
 inverted book), `gaps 0` once streaming, p50 ≈ sub-ms end-to-end. Unit tests cover the `set_level`
 path (build / absolute-resize / zero-removes-and-advances / no-op / out-of-band).
+
+### Web dashboard (`--serve PORT`)
+
+The dashboard visualises the **engine's** state, not the exchange's. Putting the view on the
+consumer side is the whole point: things like end-to-end p50/p99 latency, ring `drops`, `gaps`,
+`re-syncs`, `out_of_band`, and `crossed` only exist *because* events flowed through the ring and
+the resync state machine — a browser pointed straight at Binance could render a price ladder but
+none of that telemetry.
+
+- **Transport: HTTP snapshot polling, not a push socket.** The consumer thread serialises a small
+  JSON snapshot (top-of-book, 15 levels/side, the stats line) ~5×/sec into a mutex-guarded string;
+  a minimal `ix::HttpServer` (reusing the IXWebSocket dependency the live build already pulls —
+  no new packages, no CDN) serves it at `/snapshot.json`, and the page polls every 250 ms. Polling
+  was chosen over a WebSocket push because it's *pull-throttled* (a slow/background tab simply asks
+  less often, never backs up an unbounded send queue), trivially same-origin (no CORS, no
+  handshake), and easy to verify with `curl`. At a few Hz the cost is irrelevant.
+- **No coupling to the hot path.** The publish is off the critical section: the snapshot is built
+  from the book between ring drains on the *consumer* thread, and the HTTP handler (a separate
+  server thread) only ever reads the last finished string under a short lock. Thread A and the SPSC
+  ring are untouched; `--serve` adds nothing measurable to ingest latency.
+- **Self-contained & opt-in.** The page (HTML/CSS/vanilla JS, hand-drawn `<canvas>` sparkline, no
+  libraries) is embedded as a string in the binary, so there are no asset paths to ship and the
+  default headless build is unaffected — the server only starts when `--serve` is passed.
 
 ## Build / toolchain
 

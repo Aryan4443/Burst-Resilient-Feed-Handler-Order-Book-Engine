@@ -321,3 +321,15 @@ TEST(OrderBookL2, OutOfBandSetLevelRejected) {
   EXPECT_FALSE(b.best_bid().valid);
   EXPECT_EQ(b.live_orders(), 0u);
 }
+
+TEST(OrderBookL2, CrossedObservedAtEventBoundaryNotPerLevel) {
+  OrderBook b(small_cfg());
+  b.set_level(Side::Sell, 100, 10);
+  b.set_level(Side::Buy, 101, 5);  // transient cross mid-event
+  EXPECT_TRUE(b.is_crossed());
+  EXPECT_EQ(b.stats().crossed_observed, 0u);
+  b.observe_event_boundary();
+  EXPECT_EQ(b.stats().crossed_observed, 1u);
+  b.observe_event_boundary();  // same crossed state: no double count
+  EXPECT_EQ(b.stats().crossed_observed, 1u);
+}

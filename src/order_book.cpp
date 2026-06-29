@@ -183,6 +183,12 @@ void OrderBook::note_crossed() noexcept {
   if (is_crossed()) ++stats_.crossed_observed;
 }
 
+void OrderBook::observe_event_boundary() noexcept {
+  const bool crossed = is_crossed();
+  if (crossed && !crossed_at_last_boundary_) ++stats_.crossed_observed;
+  crossed_at_last_boundary_ = crossed;
+}
+
 void OrderBook::apply(const MarketEvent& ev) noexcept {
   switch (ev.type) {
     case EventType::Add:
@@ -293,7 +299,6 @@ void OrderBook::set_level(Side side, std::int64_t price_ticks, std::uint64_t tot
     ++stats_.adds;
   }
   ++stats_.applied;
-  note_crossed();
 }
 
 BookLevel OrderBook::best_bid() const noexcept {
@@ -347,6 +352,7 @@ void OrderBook::reset() noexcept {
   best_bid_idx_ = -1;
   best_ask_idx_ = -1;
   live_orders_ = 0;
+  crossed_at_last_boundary_ = false;
   // stats_ are cumulative across recovery and intentionally preserved.
 }
 

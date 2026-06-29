@@ -72,9 +72,15 @@ cmake --build build-live --target live_feed
 # Stream Binance's public diff-depth (L2) order book through the engine — no credentials needed.
 ./build-live/live_feed --symbol BTCUSDT --duration 30
 
-# US / region-restricted (HTTP 451)? point at the binance.us endpoints (auto-suggested on failure):
-./build-live/live_feed --rest-host https://api.binance.us \
-    --ws-url wss://stream.binance.us:9443/ws/btcusdt@depth@100ms
+# Web dashboard with Global / US market filter (runs both feeds in parallel):
+./build-live/live_feed --symbol BTCUSDT --serve 8765 --market both
+# -> open http://localhost:8765 and use the Market dropdown
+
+# Single market only (lighter — no dropdown):
+./build-live/live_feed --symbol BTCUSDT --serve 8765 --market global   # binance.com via data-api.binance.vision
+./build-live/live_feed --symbol BTCUSDT --serve 8765 --market us       # binance.us
+
+# With --serve and no --market, both feeds run by default so the dashboard can switch.
 ```
 
 It bootstraps from a REST depth snapshot, then drives the book from the live diff stream through
@@ -91,6 +97,26 @@ Binance publishes **aggregated price-level (L2)** updates, so the book is driven
 window. See [DESIGN_NOTES.md](DESIGN_NOTES.md#live-market-data-adapter-binance-l2) for how the L2
 path and update-id resync map onto the engine.
 
+### Web dashboard
+
+Add `--serve PORT` to also expose a tiny built-in web dashboard. With `--serve`, **both**
+Global and US markets run by default so you can switch in the browser dropdown; use
+`--market global|us|both` to control which feeds start:
+
+```bash
+./build-live/live_feed --symbol BTCUSDT --serve 8765 --market both
+# -> dashboard: open http://localhost:8765 (Market dropdown: Global vs US)
+```
+
+It is **fed by the engine, not the exchange**: the consumer thread publishes a JSON snapshot of
+the reconstructed book a few times a second, served same-origin over a small HTTP endpoint
+(IXWebSocket, already a live-build dependency — no extra packages, no CDN). The page polls
+`/snapshot.json` and renders top-of-book, a 15-level depth ladder per side, a session mid-price
+line, and the engine's own telemetry — **updates/s, p50/p99 latency, gaps, re-syncs, ring drops,
+out-of-band, crossed** — numbers a browser talking straight to Binance could never compute.
+**Market** (Global vs US) and **Symbol** (BTCUSDT, ETHUSDT, SOLUSDT, …) dropdowns in the header
+hot-restart the feeds without stopping the process.
+
 ## Layout
 
 ```
@@ -99,7 +125,7 @@ src/                   library implementations
 tests/                 GoogleTest unit + stress tests
 benchmarks/            microbenchmarks + stress harness + benchmark reporter
 tools/                 itch_gen (synthetic ITCH 5.0 generator)
-apps/                  feed_handler (file replay) + live_feed (live Binance L2, opt-in)
+apps/                  feed_handler (file replay) + live_feed (live Binance L2 + web dashboard, opt-in)
 DESIGN_NOTES.md        why each choice was made (interview prep)
 ```
 
