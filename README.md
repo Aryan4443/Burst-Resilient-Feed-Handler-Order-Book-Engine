@@ -1,5 +1,9 @@
 # Burst-Resilient Feed Handler & Order-Book Engine
 
+[![CI](https://github.com/Aryan4443/Burst-Resilient-Feed-Handler-Order-Book-Engine/actions/workflows/ci.yml/badge.svg)](https://github.com/Aryan4443/Burst-Resilient-Feed-Handler-Order-Book-Engine/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+![C++20](https://img.shields.io/badge/C%2B%2B-20-blue.svg)
+
 A high-performance market-data pipeline in modern **C++20**. It sits between a raw
 market-data source and any price consumer, turning a firehose of order events into a
 **live, accurate order book** that stays correct under extreme load.
@@ -69,3 +73,16 @@ DESIGN_NOTES.md        why each choice was made (interview prep)
 
 See [`DESIGN_NOTES.md`](DESIGN_NOTES.md) for the rationale behind every data structure and
 the latency / recovery design.
+
+## Continuous integration
+
+Every push and PR runs [`.github/workflows/ci.yml`](.github/workflows/ci.yml):
+
+- **build & test** on Linux (GCC/libstdc++) and macOS (clang/libc++) in Release, full
+  `ctest` suite, plus an end-to-end smoke test (generate → replay → microbench).
+- **AddressSanitizer + UBSan** and **ThreadSanitizer** builds — the latter is the headline
+  check for the lock-free SPSC ring buffer (zero data races).
+
+## License
+
+[MIT](LICENSE) © 2026 Aryan Lakhani.

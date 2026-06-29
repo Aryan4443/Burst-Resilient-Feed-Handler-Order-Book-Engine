@@ -5,7 +5,9 @@
 // cancel/execute/delete/replace reference real resting orders -> the resulting book stays
 // consistent (≈0 unknown-ref events) and never crosses (bids and asks sit in disjoint bands
 // around a fixed mid). This lets the whole engine run end-to-end with no external download.
+#include <algorithm>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <iostream>

@@ -1,3 +1,11 @@
+// glibc hides BSD/POSIX symbols (madvise, MADV_SEQUENTIAL, mmap, ...) under strict -std=c++20
+// unless a feature-test macro is set. This must precede every standard/system header so it is
+// seen before <features.h> is first pulled in. (No effect on Apple libc, which exposes them
+// regardless — which is why the omission only bites on Linux/GCC.)
+#ifndef _DEFAULT_SOURCE
+#define _DEFAULT_SOURCE 1
+#endif
+
 #include "feedhandler/itch_file_source.hpp"
 
 #include <fcntl.h>

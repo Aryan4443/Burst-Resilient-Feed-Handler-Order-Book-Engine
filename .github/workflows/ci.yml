@@ -1,0 +1,92 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+  workflow_dispatch:
+
+# Cancel an in-flight run when new commits land on the same ref.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Release build + full test suite on Linux (GCC/libstdc++) and macOS (clang/libc++).
+  # Proves the code is portable across both standard libraries, not just the dev machine.
+  # ---------------------------------------------------------------------------
+  build-test:
+    name: build & test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Ninja (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+
+      - name: Install Ninja (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ninja
+
+      - name: Configure (Release)
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+      # Smoke-test the end-to-end tools so a broken generator/pipeline/harness is caught too.
+      - name: End-to-end smoke (generate -> replay -> microbench)
+        run: |
+          ./build/itch_gen --out data/ci.itch --orders 50000
+          ./build/feed_handler --file data/ci.itch
+          ./build/benchmarks/microbench --file data/ci.itch
+
+  # ---------------------------------------------------------------------------
+  # AddressSanitizer + UBSan, and ThreadSanitizer (the lock-free ring's headline check).
+  # ---------------------------------------------------------------------------
+  sanitizers:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: asan+ubsan
+            flags: -DFH_ASAN=ON
+          - name: tsan
+            flags: -DFH_TSAN=ON
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Ninja
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+
+      # GitHub's runner kernels expose high ASLR entropy (vm.mmap_rnd_bits=32), which trips the
+      # ASan/TSan runtimes ("unexpected memory mapping"). Lower it to a value they accept.
+      - name: Lower ASLR entropy for sanitizers
+        run: sudo sysctl -w vm.mmap_rnd_bits=28
+
+      - name: Configure (Debug, ${{ matrix.name }})
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug ${{ matrix.flags }}
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Test
+        env:
+          # LeakSanitizer is intentionally off (matches local validation; avoids benign
+          # library-level reports). ASan still catches overflows/use-after-free; UBSan aborts
+          # on any undefined behaviour so it actually fails the job.
+          ASAN_OPTIONS: detect_leaks=0
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+          TSAN_OPTIONS: halt_on_error=1
+        run: ctest --test-dir build --output-on-failure
