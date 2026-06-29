@@ -44,11 +44,14 @@ jobs:
         run: ctest --test-dir build --output-on-failure
 
       # Smoke-test the end-to-end tools so a broken generator/pipeline/harness is caught too.
+      # data/ is gitignored, so create it before the generator writes into it.
       - name: End-to-end smoke (generate -> replay -> microbench)
         run: |
+          mkdir -p data reports
           ./build/itch_gen --out data/ci.itch --orders 50000
           ./build/feed_handler --file data/ci.itch
           ./build/benchmarks/microbench --file data/ci.itch
+          ./build/benchmarks/bench_harness --file data/ci.itch --report reports/ci.md
 
   # ---------------------------------------------------------------------------
   # AddressSanitizer + UBSan, and ThreadSanitizer (the lock-free ring's headline check).
